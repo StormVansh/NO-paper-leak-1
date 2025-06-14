@@ -1,0 +1,379 @@
+using System.Text.Json;
+
+namespace NoPaperLeak;
+
+/// <summary>
+/// Application constants
+/// </summary>
+public static class AppConstants
+{
+    // API Configuration
+    public const string BaseUrl = "https://localhost:7001/api";
+    public const string LocalBaseUrl = "http://localhost:5000/api";
+    
+    // Tier Levels
+    public const int MinTierLevel = 1;
+    public const int MaxTierLevel = 10;
+    public const int AdminTierLevel = 1;
+    public const int OrganizationViewTierLevel = 3;
+    
+    // File Upload
+    public const long MaxFileSize = 50 * 1024 * 1024; // 50MB
+    public static readonly string[] AllowedFileTypes = { ".pdf", ".doc", ".docx", ".txt", ".jpg", ".png", ".xlsx", ".csv" };
+    
+    // Access Codes
+    public const int DefaultMaxUses = 1;
+    public const int DefaultExpiryDays = 30;
+    public const int MaxExpiryDays = 365;
+    
+    // UI Messages
+    public const string LoginSuccessMessage = "Login successful!";
+    public const string RegisterSuccessMessage = "Registration successful!";
+    public const string UploadSuccessMessage = "Document uploaded successfully!";
+    public const string DownloadSuccessMessage = "Document downloaded successfully!";
+    public const string LogoutMessage = "You have been logged out.";
+    
+    // Error Messages
+    public const string RequiredFieldsError = "Please fill in all required fields";
+    public const string FileNotSelectedError = "Please select a file first";
+    public const string InvalidTierLevelError = "You can only create access codes for lower tier levels";
+    public const string NetworkError = "Network error occurred. Please check your connection.";
+    public const string UnauthorizedError = "You are not authorized to perform this action";
+}
+
+/// <summary>
+/// Extension methods for common operations
+/// </summary>
+public static class Extensions
+{
+    /// <summary>
+    /// Converts file size in bytes to human readable format
+    /// </summary>
+    public static string ToHumanReadableSize(this long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+    
+    /// <summary>
+    /// Checks if the file extension is allowed
+    /// </summary>
+    public static bool IsAllowedFileType(this string fileName)
+    {
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        return AppConstants.AllowedFileTypes.Contains(extension);
+    }
+    
+    /// <summary>
+    /// Safe JSON deserialization with error handling
+    /// </summary>
+    public static T SafeDeserialize<T>(this string json) where T : class, new()
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions 
+            { 
+                PropertyNameCaseInsensitive = true 
+            }) ?? new T();
+        }
+        catch
+        {
+            return new T();
+        }
+    }
+    
+    /// <summary>
+    /// Validates tier level access
+    /// </summary>
+    public static bool CanAccessTierLevel(this int userTier, int requiredTier)
+    {
+        return userTier <= requiredTier; // Lower tier numbers have higher access
+    }
+    
+    /// <summary>
+    /// Determines if user can create access codes
+    /// </summary>
+    public static bool CanCreateAccessCodes(this int userTier)
+    {
+        return userTier < AppConstants.MaxTierLevel;
+    }
+    
+    /// <summary>
+    /// Gets available tier levels for code generation
+    /// </summary>
+    public static List<int> GetAvailableTierLevels(this int userTier)
+    {
+        var levels = new List<int>();
+        for (int i = userTier + 1; i <= AppConstants.MaxTierLevel; i++)
+        {
+            levels.Add(i);
+        }
+        return levels;
+    }
+    
+    /// <summary>
+    /// Truncates text to specified length with ellipsis
+    /// </summary>
+    public static string Truncate(this string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+            return text;
+        
+        return text.Substring(0, maxLength - 3) + "...";
+    }
+    
+    /// <summary>
+    /// Validates email format
+    /// </summary>
+    public static bool IsValidEmail(this string email)
+    {
+        try
+        {
+            var addr = new System.Net.Mail.MailAddress(email);
+            return addr.Address == email;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// Validates password strength
+    /// </summary>
+    public static bool IsValidPassword(this string password)
+    {
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 6)
+            return false;
+        
+        // Check for at least one uppercase, lowercase, and digit
+        bool hasUpper = password.Any(char.IsUpper);
+        bool hasLower = password.Any(char.IsLower);
+        bool hasDigit = password.Any(char.IsDigit);
+        
+        return hasUpper && hasLower && hasDigit;
+    }
+    
+    /// <summary>
+    /// Gets tier level display name
+    /// </summary>
+    public static string GetTierDisplayName(this int tierLevel)
+    {
+        return tierLevel switch
+        {
+            1 => "Administrator",
+            2 => "Manager",
+            3 => "Supervisor",
+            4 => "Senior",
+            5 => "Regular",
+            _ => $"Level {tierLevel}"
+        };
+    }
+    
+    /// <summary>
+    /// Formats datetime for display
+    /// </summary>
+    public static string ToDisplayString(this DateTime dateTime)
+    {
+        var now = DateTime.Now;
+        var diff = now - dateTime;
+        
+        if (diff.TotalDays < 1)
+        {
+            if (diff.TotalHours < 1)
+                return $"{(int)diff.TotalMinutes} minutes ago";
+            return $"{(int)diff.TotalHours} hours ago";
+        }
+        
+        if (diff.TotalDays < 7)
+            return $"{(int)diff.TotalDays} days ago";
+        
+        return dateTime.ToString("MM/dd/yyyy");
+    }
+}
+
+/// <summary>
+/// HTTP client extensions for API calls
+/// </summary>
+public static class HttpClientExtensions
+{
+    public static async Task<T> GetFromJsonSafeAsync<T>(this HttpClient client, string requestUri) where T : class, new()
+    {
+        try
+        {
+            var response = await client.GetAsync(requestUri);
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                return content.SafeDeserialize<T>();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"HTTP GET Error: {ex.Message}");
+        }
+        return new T();
+    }
+    
+    public static async Task<ApiResponse<T>> PostAsJsonSafeAsync<T>(this HttpClient client, string requestUri, object data) where T : class
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(data);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            
+            var response = await client.PostAsync(requestUri, content);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            
+            return new ApiResponse<T>
+            {
+                IsSuccess = response.IsSuccessStatusCode,
+                Data = response.IsSuccessStatusCode ? responseContent.SafeDeserialize<T>() : null,
+                ErrorMessage = response.IsSuccessStatusCode ? null : responseContent,
+                StatusCode = (int)response.StatusCode
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ApiResponse<T>
+            {
+                IsSuccess = false,
+                ErrorMessage = ex.Message,
+                StatusCode = -1
+            };
+        }
+    }
+}
+
+/// <summary>
+/// Generic API response wrapper
+/// </summary>
+public class ApiResponse<T>
+{
+    public bool IsSuccess { get; set; }
+    public T Data { get; set; }
+    public string ErrorMessage { get; set; }
+    public int StatusCode { get; set; }
+}
+
+/// <summary>
+/// Application state manager
+/// </summary>
+public class AppState
+{
+    private static AppState _instance;
+    public static AppState Instance => _instance ??= new AppState();
+    
+    public bool IsAuthenticated { get; set; }
+    public string AuthToken { get; set; }
+    public string Username { get; set; }
+    public string FullName { get; set; }
+    public int TierLevel { get; set; }
+    public string Department { get; set; }
+    public DateTime LoginTime { get; set; }
+    
+    public void SetAuthenticationData(AuthResponse authResponse)
+    {
+        IsAuthenticated = true;
+        AuthToken = authResponse.Token;
+        Username = authResponse.Username;
+        FullName = authResponse.FullName;
+        TierLevel = authResponse.TierLevel;
+        Department = authResponse.Department;
+        LoginTime = DateTime.Now;
+    }
+    
+    public void ClearAuthenticationData()
+    {
+        IsAuthenticated = false;
+        AuthToken = null;
+        Username = null;
+        FullName = null;
+        TierLevel = 0;
+        Department = null;
+        LoginTime = default;
+    }
+    
+    public bool CanViewOrganization => IsAuthenticated && TierLevel <= AppConstants.OrganizationViewTierLevel;
+    public bool CanCreateAccessCodes => IsAuthenticated && TierLevel.CanCreateAccessCodes();
+    public string TierDisplayName => TierLevel.GetTierDisplayName();
+}
+
+/// <summary>
+/// Validation helpers
+/// </summary>
+public static class ValidationHelper
+{
+    public static ValidationResult ValidateRegistration(string username, string password, string email, string fullName)
+    {
+        var result = new ValidationResult();
+        
+        if (string.IsNullOrWhiteSpace(username))
+            result.AddError("Username is required");
+        else if (username.Length < 3)
+            result.AddError("Username must be at least 3 characters");
+        
+        if (string.IsNullOrWhiteSpace(password))
+            result.AddError("Password is required");
+        else if (!password.IsValidPassword())
+            result.AddError("Password must be at least 6 characters with uppercase, lowercase, and digit");
+        
+        if (string.IsNullOrWhiteSpace(email))
+            result.AddError("Email is required");
+        else if (!email.IsValidEmail())
+            result.AddError("Invalid email format");
+        
+        if (string.IsNullOrWhiteSpace(fullName))
+            result.AddError("Full name is required");
+        
+        return result;
+    }
+    
+    public static ValidationResult ValidateFileUpload(FileResult file, string category, string description)
+    {
+        var result = new ValidationResult();
+        
+        if (file == null)
+            result.AddError("Please select a file");
+        else
+        {
+            if (!file.FileName.IsAllowedFileType())
+                result.AddError($"File type not allowed. Allowed types: {string.Join(", ", AppConstants.AllowedFileTypes)}");
+            
+            // Note: File size validation would need to be done after reading the file
+        }
+        
+        if (string.IsNullOrWhiteSpace(category))
+            result.AddError("Category is required");
+        
+        if (string.IsNullOrWhiteSpace(description))
+            result.AddError("Description is required");
+        
+        return result;
+    }
+}
+
+/// <summary>
+/// Validation result container
+/// </summary>
+public class ValidationResult
+{
+    private readonly List<string> _errors = new();
+    
+    public bool IsValid => _errors.Count == 0;
+    public IReadOnlyList<string> Errors => _errors.AsReadOnly();
+    public string ErrorMessage => string.Join("\n", _errors);
+    
+    public void AddError(string error)
+    {
+        if (!string.IsNullOrWhiteSpace(error))
+            _errors.Add(error);
+    }
+}
