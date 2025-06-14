@@ -1,0 +1,485 @@
+// -------------------------
+// ENHANCED BACKEND - ASP.NET Core Web API
+// -------------------------
+
+// Program.cs
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// CORS Configuration
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
+// Database Configuration
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// JWT Authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
+        };
+    });
+
+// Custom Services
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IDocumentService, DocumentService>();
+
+var app = builder.Build();
+
+// Configure pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+// Ensure database is created
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    context.Database.EnsureCreated();
+}
+
+app.Run();
+
+// -------------------------
+// ENHANCED MODELS
+// -------------------------
+
+// Models/User.cs
+public class User
+{
+    public int Id { get; set; }
+    public string Username { get; set; }
+    public string PasswordHash { get; set; }
+    public string Email { get; set; }
+    public string FullName { get; set; }
+    public int TierLevel { get; set; } // 1 = highest authority, higher numbers = lower tiers
+    public string Department { get; set; }
+    public int? ParentUserId { get; set; }
+    public User ParentUser { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+    
+    // Navigation properties
+    public List<User> SubordinateUsers { get; set; } = new List<User>();
+    public List<AccessCode> GeneratedAccessCodes { get; set; } = new List<AccessCode>();
+    public List<Document> UploadedDocuments { get; set; } = new List<Document>();
+    public List<DocumentAccess> DocumentAccesses { get; set; } = new List<DocumentAccess>();
+}
+
+// Models/AccessCode.cs
+public class AccessCode
+{
+    public int Id { get; set; }
+    public string Code { get; set; }
+    public int GeneratedByUserId { get; set; }
+    public User GeneratedByUser { get; set; }
+    public int TargetTierLevel { get; set; }
+    public string Department { get; set; }
+    public bool IsUsed { get; set; } = false;
+    public int? UsedByUserId { get; set; }
+    public User UsedByUser { get; set; }
+    public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+    public DateTime? UsedDate { get; set; }
+    public DateTime ExpiryDate { get; set; }
+    public int MaxUses { get; set; } = 1;
+    public int CurrentUses { get; set; } = 0;
+}
+
+// Models/Document.cs
+public class Document
+{
+    public int Id { get; set; }
+    public string FileName { get; set; }
+    public string FilePath { get; set; }
+    public string FileHash { get; set; } // For integrity checking
+    public long FileSize { get; set; }
+    public string ContentType { get; set; }
+    public DateTime UploadDate { get; set; } = DateTime.UtcNow;
+    public int UploadedByUserId { get; set; }
+    public User UploadedByUser { get; set; }
+    public int MinimumTierLevel { get; set; } // Minimum tier level required to access
+    public string Category { get; set; }
+    public string Description { get; set; }
+    public bool IsConfidential { get; set; } = false;
+    public bool IsActive { get; set; } = true;
+    
+    // Navigation properties
+    public List<DocumentAccess> DocumentAccesses { get; set; } = new List<DocumentAccess>();
+}
+
+// Models/DocumentAccess.cs (For tracking who accessed what)
+public class DocumentAccess
+{
+    public int Id { get; set; }
+    public int DocumentId { get; set; }
+    public Document Document { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; }
+    public DateTime AccessDate { get; set; } = DateTime.UtcNow;
+    public string AccessType { get; set; } // "View", "Download"
+}
+
+// -------------------------
+// DTOs
+// -------------------------
+
+// DTOs/AuthDtos.cs
+public class LoginRequest
+{
+    public string Username { get; set; }
+    public string Password { get; set; }
+}
+
+public class RegisterRequest
+{
+    public string Username { get; set; }
+    public string Password { get; set; }
+    public string Email { get; set; }
+    public string FullName { get; set; }
+    public string Department { get; set; }
+    public string AccessCode { get; set; }
+}
+
+public class AuthResponse
+{
+    public string Token { get; set; }
+    public string Username { get; set; }
+    public string FullName { get; set; }
+    public int TierLevel { get; set; }
+    public string Department { get; set; }
+    public List<string> GeneratedAccessCodes { get; set; }
+}
+
+public class CreateAccessCodeRequest
+{
+    public int TargetTierLevel { get; set; }
+    public string Department { get; set; }
+    public int MaxUses { get; set; } = 1;
+    public int ExpiryDays { get; set; } = 30;
+}
+
+// -------------------------
+// DATABASE CONTEXT
+// -------------------------
+
+// Data/AppDbContext.cs
+public class AppDbContext : DbContext
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    public DbSet<User> Users { get; set; }
+    public DbSet<AccessCode> AccessCodes { get; set; }
+    public DbSet<Document> Documents { get; set; }
+    public DbSet<DocumentAccess> DocumentAccesses { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // User relationships
+        modelBuilder.Entity<User>()
+            .HasOne(u => u.ParentUser)
+            .WithMany(u => u.SubordinateUsers)
+            .HasForeignKey(u => u.ParentUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // AccessCode relationships
+        modelBuilder.Entity<AccessCode>()
+            .HasOne(ac => ac.GeneratedByUser)
+            .WithMany(u => u.GeneratedAccessCodes)
+            .HasForeignKey(ac => ac.GeneratedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AccessCode>()
+            .HasOne(ac => ac.UsedByUser)
+            .WithMany()
+            .HasForeignKey(ac => ac.UsedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Document relationships
+        modelBuilder.Entity<Document>()
+            .HasOne(d => d.UploadedByUser)
+            .WithMany(u => u.UploadedDocuments)
+            .HasForeignKey(d => d.UploadedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // DocumentAccess relationships
+        modelBuilder.Entity<DocumentAccess>()
+            .HasOne(da => da.Document)
+            .WithMany(d => d.DocumentAccesses)
+            .HasForeignKey(da => da.DocumentId);
+
+        modelBuilder.Entity<DocumentAccess>()
+            .HasOne(da => da.User)
+            .WithMany(u => u.DocumentAccesses)
+            .HasForeignKey(da => da.UserId);
+
+        // Indexes for performance
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Username)
+            .IsUnique();
+
+        modelBuilder.Entity<AccessCode>()
+            .HasIndex(ac => ac.Code)
+            .IsUnique();
+
+        modelBuilder.Entity<Document>()
+            .HasIndex(d => d.FileHash);
+    }
+}
+
+// -------------------------
+// SERVICES
+// -------------------------
+
+// Services/IAuthService.cs
+public interface IAuthService
+{
+    Task<AuthResponse> LoginAsync(LoginRequest request);
+    Task<AuthResponse> RegisterAsync(RegisterRequest request);
+    Task<string> GenerateAccessCodeAsync(int userId, CreateAccessCodeRequest request);
+    string GenerateJwtToken(User user);
+}
+
+// Services/AuthService.cs
+public class AuthService : IAuthService
+{
+    private readonly AppDbContext _context;
+    private readonly IConfiguration _configuration;
+
+    public AuthService(AppDbContext context, IConfiguration configuration)
+    {
+        _context = context;
+        _configuration = configuration;
+    }
+
+    public async Task<AuthResponse> LoginAsync(LoginRequest request)
+    {
+        var user = await _context.Users
+            .Include(u => u.GeneratedAccessCodes)
+            .FirstOrDefaultAsync(u => u.Username == request.Username && u.IsActive);
+
+        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+            throw new UnauthorizedAccessException("Invalid credentials");
+
+        var token = GenerateJwtToken(user);
+        
+        return new AuthResponse
+        {
+            Token = token,
+            Username = user.Username,
+            FullName = user.FullName,
+            TierLevel = user.TierLevel,
+            Department = user.Department,
+            GeneratedAccessCodes = user.GeneratedAccessCodes
+                .Where(ac => !ac.IsUsed && ac.ExpiryDate > DateTime.UtcNow)
+                .Select(ac => ac.Code)
+                .ToList()
+        };
+    }
+
+    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
+    {
+        if (await _context.Users.AnyAsync(u => u.Username == request.Username))
+            throw new InvalidOperationException("Username already exists");
+
+        User newUser;
+
+        if (string.IsNullOrEmpty(request.AccessCode))
+        {
+            // First user becomes Tier 1 (highest authority)
+            if (await _context.Users.AnyAsync())
+                throw new InvalidOperationException("Access code required for registration");
+
+            newUser = new User
+            {
+                Username = request.Username,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                Email = request.Email,
+                FullName = request.FullName,
+                TierLevel = 1,
+                Department = request.Department ?? "Administration"
+            };
+        }
+        else
+        {
+            var accessCode = await _context.AccessCodes
+                .Include(ac => ac.GeneratedByUser)
+                .FirstOrDefaultAsync(ac => ac.Code == request.AccessCode && 
+                                         !ac.IsUsed && 
+                                         ac.ExpiryDate > DateTime.UtcNow &&
+                                         ac.CurrentUses < ac.MaxUses);
+
+            if (accessCode == null)
+                throw new InvalidOperationException("Invalid or expired access code");
+
+            newUser = new User
+            {
+                Username = request.Username,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                Email = request.Email,
+                FullName = request.FullName,
+                TierLevel = accessCode.TargetTierLevel,
+                Department = accessCode.Department,
+                ParentUserId = accessCode.GeneratedByUserId
+            };
+
+            // Mark access code as used
+            accessCode.IsUsed = accessCode.CurrentUses + 1 >= accessCode.MaxUses;
+            accessCode.CurrentUses++;
+            accessCode.UsedByUserId = newUser.Id;
+            accessCode.UsedDate = DateTime.UtcNow;
+        }
+
+        _context.Users.Add(newUser);
+        await _context.SaveChangesAsync();
+
+        var token = GenerateJwtToken(newUser);
+        
+        return new AuthResponse
+        {
+            Token = token,
+            Username = newUser.Username,
+            FullName = newUser.FullName,
+            TierLevel = newUser.TierLevel,
+            Department = newUser.Department,
+            GeneratedAccessCodes = new List<string>()
+        };
+    }
+
+    public async Task<string> GenerateAccessCodeAsync(int userId, CreateAccessCodeRequest request)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+            throw new InvalidOperationException("User not found");
+
+        // Users can only create access codes for tiers below them
+        if (request.TargetTierLevel <= user.TierLevel)
+            throw new InvalidOperationException("Cannot create access code for same or higher tier level");
+
+        var accessCode = new AccessCode
+        {
+            Code = GenerateUniqueCode(),
+            GeneratedByUserId = userId,
+            TargetTierLevel = request.TargetTierLevel,
+            Department = request.Department ?? user.Department,
+            MaxUses = request.MaxUses,
+            ExpiryDate = DateTime.UtcNow.AddDays(request.ExpiryDays)
+        };
+
+        _context.AccessCodes.Add(accessCode);
+        await _context.SaveChangesAsync();
+
+        return accessCode.Code;
+    }
+
+    public string GenerateJwtToken(User user)
+    {
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var key = Encoding.ASCII.GetBytes(_configuration["Jwt:Key"]);
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[]
+            {
+                new Claim("userId", user.Id.ToString()),
+                new Claim("username", user.Username),
+                new Claim("tierLevel", user.TierLevel.ToString()),
+                new Claim("department", user.Department ?? "")
+            }),
+            Expires = DateTime.UtcNow.AddDays(7),
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
+    }
+
+    private string GenerateUniqueCode()
+    {
+        return Guid.NewGuid().ToString("N")[..8].ToUpper();
+    }
+}
+
+// Services/IDocumentService.cs
+public interface IDocumentService
+{
+    Task<bool> CanUserAccessDocument(int userId, int documentId);
+    Task<List<Document>> GetAccessibleDocuments(int userId);
+    Task LogDocumentAccess(int userId, int documentId, string accessType);
+}
+
+// Services/DocumentService.cs
+public class DocumentService : IDocumentService
+{
+    private readonly AppDbContext _context;
+
+    public DocumentService(AppDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<bool> CanUserAccessDocument(int userId, int documentId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        var document = await _context.Documents.FindAsync(documentId);
+
+        if (user == null || document == null || !document.IsActive)
+            return false;
+
+        // Users can access documents if their tier level is <= document's minimum tier level
+        return user.TierLevel <= document.MinimumTierLevel;
+    }
+
+    public async Task<List<Document>> GetAccessibleDocuments(int userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return new List<Document>();
+
+        return await _context.Documents
+            .Where(d => d.IsActive && d.MinimumTierLevel >= user.TierLevel)
+            .Include(d => d.UploadedByUser)
+            .OrderByDescending(d => d.UploadDate)
+            .ToListAsync();
+    }
+
+    public async Task LogDocumentAccess(int userId, int documentId, string accessType)
+    {
+        var access = new DocumentAccess
+        {
+            UserId = userId,
+            DocumentId = documentId,
+            AccessType = accessType
+        };
+
+        _context.DocumentAccesses.Add(access);
+        await _context.SaveChangesAsync();
+    }
+}
