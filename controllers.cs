@@ -436,4 +436,170 @@ public class UserController : ControllerBase
                 return NotFound("User not found.");
 
             // Can only deactivate users in lower tiers
-            if (targetUser.TierLevel <= currentUser.
+            if (targetUser.TierLevel <= currentUser.TierLevel)
+                return Forbid("You can only deactivate users in lower tier levels.");
+
+            targetUser.IsActive = false;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "User deactivated successfully." });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    private List<object> BuildUserTree(List<User> users, int? parentId)
+    {
+        return users
+            .Where(u => u.ParentUserId == parentId)
+            .Select(u => new
+            {
+                u.Id,
+                u.Username,
+                u.FullName,
+                u.TierLevel,
+                u.Department,
+                u.CreatedDate,
+                Children = BuildUserTree(users, u.Id)
+            })
+            .ToList<object>();
+    }
+
+    private int GetCurrentUserId()
+    {
+        return int.Parse(User.FindFirst("userId")?.Value ?? "0");
+    }
+}
+
+// Controllers/AdminController.cs
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class AdminController : ControllerBase
+{
+    private readonly AppDbContext _context;
+
+    public AdminController(AppDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet("access-logs")]
+    public async Task<ActionResult<List<object>>> GetAccessLogs(
+        [FromQuery] int? documentId = null,
+        [FromQuery] int? userId = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        try
+        {
+            var currentUserId = GetCurrentUserId();
+            var currentUser = await _context.Users.FindAsync(currentUserId);
+            
+            // Only tier 1 and 2 users can view access logs
+            if (currentUser.TierLevel > 2)
+                return Forbid("Insufficient permissions to view access logs.");
+
+            var query = _context.DocumentAccesses
+                .Include(da => da.Document)
+                .Include(da => da.User)
+                .AsQueryable();
+
+            if (documentId.HasValue)
+                query = query.Where(da => da.DocumentId == documentId);
+
+            if (userId.HasValue)
+                query = query.Where(da => da.UserId == userId);
+
+            if (fromDate.HasValue)
+                query = query.Where(da => da.AccessDate >= fromDate);
+
+            if (toDate.HasValue)
+                query = query.Where(da => da.AccessDate <= toDate);
+
+            var logs = await query
+                .OrderByDescending(da => da.AccessDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(da => new
+                {
+                    da.Id,
+                    da.AccessDate,
+                    da.AccessType,
+                    Document = new
+                    {
+                        da.Document.Id,
+                        da.Document.FileName,
+                        da.Document.Category
+                    },
+                    User = new
+                    {
+                        da.User.Id,
+                        da.User.Username,
+                        da.User.FullName,
+                        da.User.Department,
+                        da.User.TierLevel
+                    }
+                })
+                .ToListAsync();
+
+            return Ok(logs);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("statistics")]
+    public async Task<ActionResult<object>> GetStatistics()
+    {
+        try
+        {
+            var currentUserId = GetCurrentUserId();
+            var currentUser = await _context.Users.FindAsync(currentUserId);
+            
+            // Only tier 1 and 2 users can view statistics
+            if (currentUser.TierLevel > 2)
+                return Forbid("Insufficient permissions to view statistics.");
+
+            var stats = new
+            {
+                TotalUsers = await _context.Users.CountAsync(u => u.IsActive),
+                TotalDocuments = await _context.Documents.CountAsync(d => d.IsActive),
+                TotalAccessCodes = await _context.AccessCodes.CountAsync(),
+                ActiveAccessCodes = await _context.AccessCodes.CountAsync(ac => !ac.IsUsed && ac.ExpiryDate > DateTime.UtcNow),
+                RecentUploads = await _context.Documents.CountAsync(d => d.IsActive && d.UploadDate >= DateTime.UtcNow.AddDays(-7)),
+                RecentAccesses = await _context.DocumentAccesses.CountAsync(da => da.AccessDate >= DateTime.UtcNow.AddDays(-7)),
+                UsersByTier = await _context.Users
+                    .Where(u => u.IsActive)
+                    .GroupBy(u => u.TierLevel)
+                    .Select(g => new { TierLevel = g.Key, Count = g.Count() })
+                    .OrderBy(x => x.TierLevel)
+                    .ToListAsync(),
+                DocumentsByCategory = await _context.Documents
+                    .Where(d => d.IsActive)
+                    .GroupBy(d => d.Category)
+                    .Select(g => new { Category = g.Key, Count = g.Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(10)
+                    .ToListAsync()
+            };
+
+            return Ok(stats);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    private int GetCurrentUserId()
+    {
+        return int.Parse(User.FindFirst("userId")?.Value ?? "0");
+    }
+}
