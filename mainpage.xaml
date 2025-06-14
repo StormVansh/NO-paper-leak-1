@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage x:Class="NoPaperLeak.MainPage"
+             xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             Title="No-Paper Leak System"
+             x:Name="ThisPage">
+
+    <ScrollView>
+        <VerticalStackLayout Spacing="20" Padding="30">
+            
+            <!-- Authentication Section -->
+            <Frame BackgroundColor="LightBlue" Padding="20" IsVisible="{Binding IsNotAuthenticated}">
+                <VerticalStackLayout Spacing="15">
+                    <Label Text="Authentication" FontSize="18" FontAttributes="Bold" HorizontalOptions="Center"/>
+                    
+                    <Entry x:Name="UsernameEntry" Placeholder="Username" Text="{Binding Username}"/>
+                    <Entry x:Name="PasswordEntry" Placeholder="Password" IsPassword="True" Text="{Binding Password}"/>
+                    
+                    <Button Text="Login" Command="{Binding LoginCommand}" BackgroundColor="Green" TextColor="White"/>
+                    
+                    <Label Text="--- OR REGISTER ---" HorizontalOptions="Center" FontAttributes="Bold"/>
+                    
+                    <Entry x:Name="EmailEntry" Placeholder="Email" Text="{Binding Email}"/>
+                    <Entry x:Name="FullNameEntry" Placeholder="Full Name" Text="{Binding FullName}"/>
+                    <Entry x:Name="DepartmentEntry" Placeholder="Department" Text="{Binding Department}"/>
+                    <Entry x:Name="AccessCodeEntry" Placeholder="Access Code (leave empty for first user)" Text="{Binding AccessCode}"/>
+                    
+                    <Button Text="Register" Command="{Binding RegisterCommand}" BackgroundColor="Blue" TextColor="White"/>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- User Profile Section -->
+            <Frame BackgroundColor="LightGreen" Padding="20" IsVisible="{Binding IsAuthenticated}">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="{Binding UserProfile, StringFormat='Welcome, {0}'}" FontSize="18" FontAttributes="Bold"/>
+                    <Label Text="{Binding UserTier, StringFormat='Tier Level: {0}'}" FontSize="14"/>
+                    <Label Text="{Binding UserDepartment, StringFormat='Department: {0}'}" FontSize="14"/>
+                    <Button Text="Logout" Command="{Binding LogoutCommand}" BackgroundColor="Red" TextColor="White"/>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Access Code Management -->
+            <Frame BackgroundColor="LightYellow" Padding="20" IsVisible="{Binding IsAuthenticated}">
+                <VerticalStackLayout Spacing="15">
+                    <Label Text="Generate Access Code" FontSize="16" FontAttributes="Bold"/>
+                    
+                    <Picker x:Name="TierLevelPicker" Title="Select Target Tier Level" ItemsSource="{Binding AvailableTierLevels}" SelectedItem="{Binding SelectedTierLevel}"/>
+                    <Entry x:Name="CodeDepartmentEntry" Placeholder="Department" Text="{Binding CodeDepartment}"/>
+                    <Entry x:Name="MaxUsesEntry" Placeholder="Max Uses (default: 1)" Text="{Binding MaxUses}" Keyboard="Numeric"/>
+                    <Entry x:Name="ExpiryDaysEntry" Placeholder="Expiry Days (default: 30)" Text="{Binding ExpiryDays}" Keyboard="Numeric"/>
+                    
+                    <Button Text="Generate Access Code" Command="{Binding GenerateAccessCodeCommand}" BackgroundColor="Orange" TextColor="White"/>
+                    
+                    <Label Text="Your Generated Access Codes:" FontAttributes="Bold"/>
+                    <CollectionView ItemsSource="{Binding AccessCodes}">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="10" BackgroundColor="White" Margin="5">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Label Grid.Row="0" Text="{Binding Code}" FontAttributes="Bold" FontSize="16"/>
+                                    <Label Grid.Row="1" Text="{Binding Details}" FontSize="12" TextColor="Gray"/>
+                                </Grid>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Document Upload Section -->
+            <Frame BackgroundColor="LightCoral" Padding="20" IsVisible="{Binding IsAuthenticated}">
+                <VerticalStackLayout Spacing="15">
+                    <Label Text="Upload Document" FontSize="16" FontAttributes="Bold"/>
+                    
+                    <Button Text="Select File" Command="{Binding SelectFileCommand}" BackgroundColor="Purple" TextColor="White"/>
+                    <Label Text="{Binding SelectedFileName}" FontSize="12" TextColor="Gray"/>
+                    
+                    <Picker x:Name="MinTierLevelPicker" Title="Minimum Tier Level Required" ItemsSource="{Binding MinTierLevels}" SelectedItem="{Binding SelectedMinTierLevel}"/>
+                    <Entry x:Name="CategoryEntry" Placeholder="Category" Text="{Binding DocumentCategory}"/>
+                    <Entry x:Name="DescriptionEntry" Placeholder="Description" Text="{Binding DocumentDescription}"/>
+                    <CheckBox x:Name="ConfidentialCheckBox" IsChecked="{Binding IsConfidential}"/>
+                    <Label Text="Mark as Confidential"/>
+                    
+                    <Button Text="Upload Document" Command="{Binding UploadDocumentCommand}" BackgroundColor="DarkRed" TextColor="White"/>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Document List Section -->
+            <Frame BackgroundColor="LightGray" Padding="20" IsVisible="{Binding IsAuthenticated}">
+                <VerticalStackLayout Spacing="15">
+                    <Label Text="Available Documents" FontSize="16" FontAttributes="Bold"/>
+                    <Button Text="Refresh Documents" Command="{Binding RefreshDocumentsCommand}" BackgroundColor="Gray" TextColor="White"/>
+                    
+                    <CollectionView ItemsSource="{Binding Documents}">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate>
+                                <Frame BorderColor="DarkGray" Padding="15" Margin="5" BackgroundColor="White">
+                                    <VerticalStackLayout Spacing="8">
+                                        <Label Text="{Binding FileName}" FontAttributes="Bold" FontSize="16"/>
+                                        <Label Text="{Binding Category}" FontSize="12" TextColor="Blue"/>
+                                        <Label Text="{Binding Description}" FontSize="12" TextColor="Gray"/>
+                                        <Label Text="{Binding UploadInfo}" FontSize="10" TextColor="DarkGray"/>
+                                        <StackLayout Orientation="Horizontal" Spacing="10">
+                                            <Button Text="View Details" Command="{Binding Source={x:Reference Name=ThisPage}, Path=BindingContext.ViewDocumentCommand}" CommandParameter="{Binding Id}" BackgroundColor="Green" TextColor="White" FontSize="12"/>
+                                            <Button Text="Download" Command="{Binding Source={x:Reference Name=ThisPage}, Path=BindingContext.DownloadDocumentCommand}" CommandParameter="{Binding Id}" BackgroundColor="Blue" TextColor="White" FontSize="12"/>
+                                        </StackLayout>
+                                    </VerticalStackLayout>
+                                </Frame>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Organization Tree (for higher tier users) -->
+            <Frame BackgroundColor="Lavender" Padding="20" IsVisible="{Binding CanViewOrganization}">
+                <VerticalStackLayout Spacing="15">
+                    <Label Text="Organization Structure" FontSize="16" FontAttributes="Bold"/>
+                    <Button Text="Load Organization Tree" Command="{Binding LoadOrganizationCommand}" BackgroundColor="Navy" TextColor="White"/>
+                    
+                    <CollectionView ItemsSource="{Binding OrganizationTree}">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate>
+                                <Frame BorderColor="Navy" Padding="10" Margin="2" BackgroundColor="AliceBlue">
+                                    <VerticalStackLayout Spacing="5">
+                                        <Label Text="{Binding DisplayName}" FontAttributes="Bold"/>
+                                        <Label Text="{Binding TierInfo}" FontSize="12" TextColor="DarkBlue"/>
+                                    </VerticalStackLayout>
+                                </Frame>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </VerticalStackLayout>
+            </Frame>
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
